@@ -6,6 +6,7 @@ import Control.Monad
 import Numeric
 import Data.Complex
 import Data.Ratio
+import Data.Array
 
 main :: IO ()
 main = do
@@ -23,6 +24,7 @@ data LispVal = Atom String
     | Character Char
     | Rational (Ratio Integer)
     | Complex (Complex Double)
+    | Vector (Array Int LispVal)
     deriving Show
 
 parseSymbol :: Parser Char
@@ -56,7 +58,7 @@ parseBool = do char '#'
 parseAtom :: Parser LispVal
 parseAtom = do first <- letter <|> parseSymbol
                rest <- many (letter <|> digit <|> parseSymbol)
-               return $ String (first : rest)
+               return $ Atom (first : rest)
 
 parseImplicitDec :: Parser LispVal
 parseImplicitDec = do num <- many1 digit
@@ -137,15 +139,54 @@ parseComplex = do real <- (try parseFloat <|> parseNumber)
                   char 'i'
                   return $ Complex ((getFloatVal real) :+ (getFloatVal imag))
 
+parseList :: Parser LispVal
+parseList = liftM List $ sepBy parseExpr parseSpaces
+
+parseImproperList :: Parser LispVal
+parseImproperList = do head <- endBy parseExpr parseSpaces
+                       char '.' >> parseSpaces
+                       tail <- parseExpr
+                       return $ ImproperList head tail
+
+parseQuote :: Parser LispVal
+parseQuote = do char '\''
+                x <- parseExpr
+                return $ List [Atom "quote", x]
+
+parseQuasiQuote :: Parser LispVal
+parseQuasiQuote = do char '`'
+                     x <- parseExpr
+                     return $ List [Atom "quasiquote", x]
+
+parseUnquote :: Parser LispVal
+parseUnquote = do char ','
+                  x <- parseExpr
+                  return $ List [Atom "unquote", x]
+
+parseVector :: Parser LispVal
+parseVector = do x <- sepBy parseExpr parseSpaces
+                 return $ Vector (listArray (0, (length x) - 1) x)
+
 parseExpr :: Parser LispVal
-parseExpr = try parseString
-            <|> try parseAtom
+parseExpr = try parseAtom
+            <|> try parseString
             <|> try parseBool
             <|> try parseCharacter
             <|> try parseComplex
             <|> try parseFloat
             <|> try parseRational
             <|> try parseNumber
+            <|> try parseQuote
+            <|> try parseQuasiQuote
+            <|> try parseUnquote
+            <|> try (do string "#("
+                        x <- try parseVector
+                        char ')'
+                        return x)
+            <|> try (do char '('
+                        x <- try parseList <|> parseImproperList
+                        char ')'
+                        return x)
 
 readExpr :: String -> String
 readExpr input = case parse parseExpr "lisp" input of
